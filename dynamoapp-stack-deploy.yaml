@@ -1,0 +1,4 @@
+template-file-path: dynamoapp-template.yaml
+parameters:
+  EnvironmentName: dev
+tags: {}
