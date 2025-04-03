@@ -1,0 +1,3 @@
+template-file-path: dynamoSAM-template.yaml
+parameters: {}
+tags: {}
