@@ -207,7 +207,7 @@ Resources:
   ECRRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: todo-app
+      RepositoryName: dream-planner
       LifecyclePolicy:
         LifecyclePolicyText: |
           {
