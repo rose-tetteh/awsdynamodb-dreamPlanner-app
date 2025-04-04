@@ -1,0 +1,8 @@
+template-file-path: dynamoapp-ecstemplate.yaml
+parameters:
+  EnvironmentName: dev
+  UsePrivateSubnets: 'false'
+  HealthCheckPath: /api/todos
+  ContainerPort: '5000'
+  DeploymentType: BLUE_GREEN
+tags: {}
