@@ -1,0 +1,351 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS, ALB, Task Definition, Roles, CloudWatch and AutoScaling for Todo Application
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name
+    Type: String
+    Default: dev
+  ECRImageURI:
+    Description: ECR Image URI
+    Type: String
+  ContainerPort:
+    Description: Port exposed by the container
+    Type: Number
+    Default: 5000
+  HealthCheckPath:
+    Description: Path for ALB health check
+    Type: String
+    Default: /api/todos
+  DeploymentType:
+    Description: ECS Deployment type
+    Type: String
+    Default: BLUE_GREEN
+    AllowedValues:
+      - BLUE_GREEN
+      - ROLLING_UPDATE
+  UsePrivateSubnets:
+    Description: Whether to use private subnets for ECS tasks
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+Conditions:
+  UseBlueGreenDeployment: !Equals [!Ref DeploymentType, BLUE_GREEN]
+  UsePrivateSubnetsForTasks: !Equals [!Ref UsePrivateSubnets, true]
+
+Resources:
+  # CloudWatch Log Group
+  TodoAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/dream-planner
+      RetentionInDays: 30
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: dream-planner-cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  # Task Execution Role
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  # Task Role (for application permissions)
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  # CodeDeploy Role for Blue/Green Deployments
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Condition: UseBlueGreenDeployment
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS
+
+  # Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: dream-planner
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: dream-planner
+          Image: !Ref ECRImageURI
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref TodoAppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  # Application Load Balancer
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: dream-planner-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-ALB-SG
+      Subnets:
+        - Fn::Select:
+            - 0
+            - Fn::Split:
+                - ","
+                - Fn::ImportValue: !Sub ${EnvironmentName}-PUBLIC-SUBNETS
+        - Fn::Select:
+            - 1
+            - Fn::Split:
+                - ","
+                - Fn::ImportValue: !Sub ${EnvironmentName}-PUBLIC-SUBNETS
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+
+  # ALB Target Group - Blue
+  TargetGroupBlue:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: dream-planner-tg-blue
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-VPC
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+
+  # ALB Target Group - Green
+  TargetGroupGreen:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: UseBlueGreenDeployment
+    Properties:
+      Name: dream-planner-tg-green
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-VPC
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+
+  # ALB Listener
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroupBlue
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: HTTPListener
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: dream-planner-service
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      DeploymentController:
+        Type: !If [UseBlueGreenDeployment, CODE_DEPLOY, ECS]
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !If [UsePrivateSubnetsForTasks, DISABLED, ENABLED]
+          SecurityGroups:
+            - Fn::ImportValue: !Sub ${EnvironmentName}-ECS-SG
+          Subnets: !If
+            - UsePrivateSubnetsForTasks
+            - - Fn::Select:
+                  - 0
+                  - Fn::Split:
+                      - ","
+                      - Fn::ImportValue: !Sub ${EnvironmentName}-PRIVATE-SUBNETS
+              - Fn::Select:
+                  - 1
+                  - Fn::Split:
+                      - ","
+                      - Fn::ImportValue: !Sub ${EnvironmentName}-PRIVATE-SUBNETS
+            - - Fn::Select:
+                  - 0
+                  - Fn::Split:
+                      - ","
+                      - Fn::ImportValue: !Sub ${EnvironmentName}-PUBLIC-SUBNETS
+              - Fn::Select:
+                  - 1
+                  - Fn::Split:
+                      - ","
+                      - Fn::ImportValue: !Sub ${EnvironmentName}-PUBLIC-SUBNETS
+      LoadBalancers:
+        - ContainerName: dream-planner
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroupBlue
+
+  # Auto Scaling
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 10
+      MinCapacity: 2
+      ResourceId: !Join
+        - /
+        - - service
+          - !Ref ECSCluster
+          - !GetAtt ECSService.Name
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+
+  ScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ScaleOnCPUUtilization
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+
+  ScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ScaleOnMemoryUtilization
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80.0
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+
+  # CodeDeploy Application for Blue/Green Deployments
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Condition: UseBlueGreenDeployment
+    Properties:
+      ApplicationName: dream-planner-deployment
+      ComputePlatform: ECS
+
+  # CodeDeploy Deployment Group
+  DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Condition: UseBlueGreenDeployment
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: dream-planner-dg
+      DeploymentConfigName: CodeDeployDefault.ECSAllAtOnce
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      BlueGreenDeploymentConfiguration:
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+          WaitTimeInMinutes: 0
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: 5
+      ECSServices:
+        - ClusterName: !Ref ECSCluster
+          ServiceName: !GetAtt ECSService.Name
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - ProdTrafficRoute:
+              ListenerArns:
+                - !Ref HTTPListener
+            TargetGroups:
+              - Name: !GetAtt TargetGroupBlue.TargetGroupName
+              - Name: !GetAtt TargetGroupGreen.TargetGroupName
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of load balancer
+    Value: !GetAtt ALB.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-ALB-DNS
+
+  ECSCluster:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-ECS-CLUSTER
+
+  ECSService:
+    Description: ECS Service Name
+    Value: !GetAtt ECSService.Name
+    Export:
+      Name: !Sub ${EnvironmentName}-ECS-SERVICE
+
+  TaskDefinition:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub ${EnvironmentName}-TASK-DEFINITION
