@@ -5,5 +5,5 @@ Resources:
       Properties:
         TaskDefinition: "arn:aws:ecs:eu-west-1:711387109786:task-definition/dream-planner:2"
         LoadBalancerInfo:
-          ContainerName: "todo-app"
-          ContainerPort: 8080
+          ContainerName: "dream-planner"
+          ContainerPort: 5000
