@@ -1,14 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: ECS, ALB, Task Definition, Roles, CloudWatch and AutoScaling for Todo Application
+Description: ECS, ALB, Task Definition, Roles, CloudWatch and AutoScaling for Dream Planner Application
 
 Parameters:
   EnvironmentName:
     Description: Environment name
     Type: String
     Default: dev
-  ECRImageURI:
-    Description: ECR Image URI
-    Type: String
   ContainerPort:
     Description: Port exposed by the container
     Type: Number
@@ -114,7 +111,7 @@ Resources:
       TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: dream-planner
-          Image: !Ref ECRImageURI
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/dream-planner:latest'
           Essential: true
           PortMappings:
             - ContainerPort: !Ref ContainerPort
@@ -306,6 +303,9 @@ Resources:
       DeploymentGroupName: dream-planner-dg
       DeploymentConfigName: CodeDeployDefault.ECSAllAtOnce
       ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
       BlueGreenDeploymentConfiguration:
         DeploymentReadyOption:
           ActionOnTimeout: CONTINUE_DEPLOYMENT

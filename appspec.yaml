@@ -1,0 +1,9 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: "arn:aws:ecs:eu-west-1:711387109786:task-definition/dream-planner:2"
+        LoadBalancerInfo:
+          ContainerName: "todo-app"
+          ContainerPort: 8080
