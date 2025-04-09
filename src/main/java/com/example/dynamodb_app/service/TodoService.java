@@ -14,11 +14,6 @@ import java.util.List;
 public class TodoService {
     private final TodoRepository todoRepository;
 
-//    @Autowired
-//    public TodoService(TodoRepository todoRepository) {
-//        this.todoRepository = todoRepository;
-//    }
-
     public List<Todo> getAllTodos() {
         return todoRepository.findAll();
     }
