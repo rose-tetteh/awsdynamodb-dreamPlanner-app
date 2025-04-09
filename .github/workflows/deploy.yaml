@@ -12,11 +12,11 @@ jobs:
     env:
       AWS_REGION: eu-west-1
       ECR_REPOSITORY: dream-planner
-      ECS_CLUSTER: dream-planner-cluster
-      ECS_SERVICE: dream-planner-service
-      TASK_DEFINITION: dream-planner
-      CONTAINER_NAME: dream-planner
-      CONTAINER_PORT: 5000
+      # ECS_CLUSTER: dream-planner-cluster
+      # ECS_SERVICE: dream-planner-service
+      # TASK_DEFINITION: dream-planner
+      # CONTAINER_NAME: dream-planner
+      # CONTAINER_PORT: 5000
       
     steps:
     - name: Checkout code
@@ -45,26 +45,26 @@ jobs:
         
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    - name: Download current task definition
-      run: |
-        aws ecs describe-task-definition --task-definition $TASK_DEFINITION \
-        --query taskDefinition > task-definition.json
+    # - name: Download current task definition
+    #   run: |
+    #     aws ecs describe-task-definition --task-definition $TASK_DEFINITION \
+    #     --query taskDefinition > task-definition.json
         
-    - name: Update task definition with new image
-      id: task-def
-      uses: aws-actions/amazon-ecs-render-task-definition@v1
-      with:
-        task-definition: task-definition.json
-        container-name: ${{ env.CONTAINER_NAME }}
-        image: ${{ steps.build-image.outputs.image }}
+    # - name: Update task definition with new image
+    #   id: task-def
+    #   uses: aws-actions/amazon-ecs-render-task-definition@v1
+    #   with:
+    #     task-definition: task-definition.json
+    #     container-name: ${{ env.CONTAINER_NAME }}
+    #     image: ${{ steps.build-image.outputs.image }}
         
-    - name: Deploy to Amazon ECS with CodeDeploy
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: true
-        codedeploy-appspec-file: appspec.yaml
-        codedeploy-application: dream-planner-deployment
-        codedeploy-deployment-group: dream-planner-dg
+    # - name: Deploy to Amazon ECS with CodeDeploy
+    #   uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+    #   with:
+    #     task-definition: ${{ steps.task-def.outputs.task-definition }}
+    #     service: ${{ env.ECS_SERVICE }}
+    #     cluster: ${{ env.ECS_CLUSTER }}
+    #     wait-for-service-stability: true
+    #     codedeploy-appspec-file: appspec.yaml
+    #     codedeploy-application: dream-planner-deployment
+    #     codedeploy-deployment-group: dream-planner-dg
