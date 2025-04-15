@@ -15,6 +15,7 @@ target/
 
 ### IntelliJ IDEA ###
 .idea
+.aws-sam
 *.iws
 *.iml
 *.ipr
